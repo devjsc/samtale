@@ -1,0 +1,6 @@
+.idea
+.DS_Store
+
+chatters.egg-info
+dist/
+__pycache__/
