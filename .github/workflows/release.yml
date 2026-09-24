@@ -90,7 +90,7 @@ jobs:
       - name: Download distributions
         uses: actions/download-artifact@v4
         with:
-          name: dis
+          name: dist
           path: dist/
 
       - name: Publish
