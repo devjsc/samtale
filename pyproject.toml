@@ -1,19 +1,45 @@
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "samtale"
 version = "0.1.0"
-description = "Minimal typed HTTP messaging for independent Python agents."
+description = "A modern, minimal messaging framework for agents."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Joshua Croft" }
+]
+keywords = [
+    "agents",
+    "messaging",
+    "multi-agent",
+    "asyncio",
+    "http"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
-  "httpx>=0.27",
-  "pydantic>=2.0",
-  "starlette>=0.40",
-  "uvicorn>=0.29",
+    "httpx",
+    "pydantic>=2",
+    "starlette",
+    "uvicorn",
 ]
 
-[tool.setuptools.packages.find]
-include = ["samtale*"]
+[project.urls]
+Homepage = "https://github.com/devjc/samtale"
+Repository = "https://github.com/devjc/samtale"
+Issues = "https://github.com/devjc/samtale/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/samtale"]

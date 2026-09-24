@@ -1,0 +1,77 @@
+name: Publish release to PyPI
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+rc[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+[ab][0-9]+"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+
+      - name: Run tests
+        run: |
+          uv sync --locked
+          uv run python -m unittest discover -s tests -v
+
+      - name: Build
+        run: uv build --no-sources
+
+      - name: Smoke-test wheel
+        run: |
+          uv run --isolated --no-project \
+            --with dist/*.whl \
+            python -c "from samtale import Agent, Message, Status"
+
+      - name: Smoke-test source distribution
+        run: |
+          uv run --isolated --no-project \
+            --with dist/*.tar.gz \
+            python -c "from samtale import Agent, Message, Status"
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: pypi
+      url: https://pypi.org/project/samtale/
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        run: uv publish

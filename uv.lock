@@ -218,10 +218,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "starlette", specifier = ">=0.40" },
-    { name = "uvicorn", specifier = ">=0.29" },
+    { name = "httpx" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 
 [[package]]
