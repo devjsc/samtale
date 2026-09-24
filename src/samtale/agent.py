@@ -8,6 +8,7 @@ agents. Handler execution is intentionally serialized through the queue.
 """
 
 import asyncio
+import inspect
 import logging
 import math
 from contextlib import asynccontextmanager
@@ -58,22 +59,24 @@ class Agent:
         self,
         name: str,
         *,
-        timeout: float = 5.0,
+        request_timeout: float = 5.0,
         handler_timeout: float | None = None,
         max_concurrency: int = 1,
+        max_queue_size: int | None = None,
     ):
         """Create an agent.
 
         Args:
             name: Stable sender name used in outbound and response messages.
-            timeout: HTTP client timeout for outbound sends.
+            request_timeout: HTTP client timeout for outbound requests.
             handler_timeout: Optional timeout for each handler invocation.
             max_concurrency: Maximum number of handlers that may run at once.
+            max_queue_size: Maximum number of requests waiting for a worker.
         """
         if not isinstance(name, str) or not name.strip():
             raise ValueError("name must be a non-empty string")
-        if not _valid_timeout(timeout):
-            raise ValueError("timeout must be greater than zero")
+        if not _valid_timeout(request_timeout):
+            raise ValueError("request_timeout must be greater than zero")
         if handler_timeout is not None and not _valid_timeout(handler_timeout):
             raise ValueError("handler_timeout must be greater than zero")
         if (
@@ -82,16 +85,23 @@ class Agent:
             or max_concurrency <= 0
         ):
             raise ValueError("max_concurrency must be a positive integer")
+        if max_queue_size is not None and (
+            not isinstance(max_queue_size, int)
+            or isinstance(max_queue_size, bool)
+            or max_queue_size <= 0
+        ):
+            raise ValueError("max_queue_size must be a positive integer or None")
 
         # Keep construction cheap: the HTTP app is ready, but the worker pool
         # starts with the app lifespan or an explicit start() call.
         self.name = name.strip()
-        self.timeout = timeout
+        self.request_timeout = request_timeout
         self.handler_timeout = handler_timeout
         self.max_concurrency = max_concurrency
+        self.max_queue_size = max_queue_size
         self.handlers: dict[str, HandlerDefinition] = {}
         self.inbox: asyncio.Queue[tuple[Message, asyncio.Future[Message]]] = (
-            asyncio.Queue()
+            asyncio.Queue(maxsize=max_queue_size or 0)
         )
         self._workers: list[asyncio.Task[None]] = []
         self._client: httpx.AsyncClient | None = None
@@ -129,7 +139,16 @@ class Agent:
                 )
 
             future: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
-            await self.inbox.put((message, future))
+            try:
+                self.inbox.put_nowait((message, future))
+            except asyncio.QueueFull:
+                response = Message.reject(
+                    self.name,
+                    message,
+                    "agent_busy",
+                    {"retryable": True},
+                )
+                return json_message(response, status_for(response))
             try:
                 response = await future
             except asyncio.CancelledError:
@@ -173,6 +192,8 @@ class Agent:
 
         # Decorator API: @agent.on("read") registers the async handler.
         def decorator(fn: Handler):
+            if not inspect.iscoroutinefunction(fn):
+                raise TypeError("handler must be an async function")
             if message_type in self.handlers:
                 raise ValueError(f"handler already registered for {message_type!r}")
             self.handlers[message_type] = HandlerDefinition(
@@ -198,7 +219,7 @@ class Agent:
         """Start the outbound HTTP client and handler workers."""
         # Idempotent so tests or embedding code can call it directly.
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=self.timeout)
+            self._client = httpx.AsyncClient(timeout=self.request_timeout)
         self._workers = [worker for worker in self._workers if not worker.done()]
         self._workers.extend(
             asyncio.create_task(self._loop())
@@ -296,7 +317,7 @@ class Agent:
             )
             response.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise SendTimeout(address, message.id, self.timeout) from exc
+            raise SendTimeout(address, message.id, self.request_timeout) from exc
         except httpx.HTTPStatusError as exc:
             envelope = response_message(exc.response, address)
             validate_response(address, message, envelope)
@@ -355,7 +376,7 @@ class Agent:
                 address, response.reply_to or "", remote_error_payload(response)
             )
 
-    def run(self, *, host: str = "0.0.0.0", port: int = 8000) -> None:
+    def run(self, *, host: str = "127.0.0.1", port: int = 8000) -> None:
         """Run the agent's Starlette app with uvicorn."""
         # Convenience runner for examples and small local processes.
         uvicorn.run(self.app, host=host, port=port)

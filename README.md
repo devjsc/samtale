@@ -141,7 +141,7 @@ async def set_temperature_with_fallback() -> None:
         )
 ```
 
-The framework standardizes the exchange; the agents decide what happens next.
+The framework standardises the exchange; the agents decide what happens next.
 
 ## Self-describing rejections
 
@@ -186,6 +186,33 @@ The three outbound methods share the same acknowledged HTTP exchange:
 `RemoteError` for unexpected remote failures. `emit()` is a convenience method,
 not guaranteed delivery or true fire-and-forget.
 
+Handlers registered with `@agent.on(...)` must be defined with `async def`.
+Synchronous handlers are rejected during registration so an invalid handler does
+not fail only after receiving a request.
+
+## Timeouts
+
+`request_timeout` controls outbound HTTP operations made by `send()`, `ask()`,
+and `emit()`. If the remote agent does not complete the exchange within the
+HTTP client's timeout limits, the caller receives `SendTimeout`.
+
+`handler_timeout` independently limits one local handler invocation. When the
+limit is exceeded, the invocation is cancelled and the agent returns an `error`
+message with reason `handler_timeout` using HTTP 504:
+
+```python
+# Calls other agents, with an outbound timeout
+consumer = Agent("consumer", request_timeout=5.0)
+
+# Cancels local handlers that run too long
+weather = Agent("weather", handler_timeout=10.0)
+```
+
+These values are local limits. Samtale does not propagate a deadline through a
+chain of agents, and time already spent by an upstream agent is not subtracted
+from a downstream timeout. Applications that need an end-to-end deadline must
+carry and enforce one as part of their own message protocol.
+
 ## Concurrency
 
 Agents execute one handler at a time by default. Set `max_concurrency` when an
@@ -198,6 +225,23 @@ agent = Agent("weather", max_concurrency=8)
 At most eight handlers execute simultaneously; additional messages remain in
 the inbox. Concurrent handlers can access the same local state across `await`
 points, so applications should protect shared mutable state when necessary.
+
+The inbox is unlimited by default. Set `max_queue_size` to bound the number of
+requests waiting for a handler:
+
+```python
+agent = Agent(
+    "weather",
+    max_concurrency=4,
+    max_queue_size=20,
+)
+```
+
+Here, four handlers may run while twenty additional requests wait. Once the
+inbox is full, new requests are not queued. They receive an immediate
+`rejected` response with reason `agent_busy` and payload `{"retryable": true}`.
+The response uses HTTP 200; `send()` returns it normally, while `ask()` and
+`emit()` raise `RemoteRejection`. Samtale does not retry automatically.
 
 ## Wire format
 

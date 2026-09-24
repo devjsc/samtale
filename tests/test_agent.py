@@ -24,18 +24,32 @@ class AgentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Agent("   ")
         with self.assertRaises(ValueError):
-            Agent("agent", timeout=0)
+            Agent("agent", request_timeout=0)
         with self.assertRaises(ValueError):
-            Agent("agent", timeout=float("nan"))
+            Agent("agent", request_timeout=float("nan"))
         with self.assertRaises(ValueError):
             Agent("agent", handler_timeout=-1)
         with self.assertRaises(ValueError):
             Agent("agent", max_concurrency=0)
         with self.assertRaises(ValueError):
             Agent("agent", max_concurrency=True)
+        with self.assertRaises(ValueError):
+            Agent("agent", max_queue_size=0)
+        with self.assertRaises(ValueError):
+            Agent("agent", max_queue_size=True)
 
         self.assertEqual(Agent("  weather  ").name, "weather")
+        self.assertEqual(Agent("weather").request_timeout, 5.0)
         self.assertEqual(Agent("weather").max_concurrency, 1)
+        self.assertIsNone(Agent("weather").max_queue_size)
+
+    def test_run_defaults_to_loopback(self):
+        agent = Agent("weather")
+
+        with patch("samtale.agent.uvicorn.run") as run:
+            agent.run(port=8003)
+
+        run.assert_called_once_with(agent.app, host="127.0.0.1", port=8003)
 
     def test_endpoint_dispatches_dict_result_as_ok_response(self):
         async def main():
@@ -160,6 +174,59 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(response["json"]["reason"], "agent_closed")
         self.assertEqual(queue_size, 0)
 
+    def test_full_inbox_rejects_new_requests_as_busy(self):
+        async def main():
+            agent = Agent("temperature", max_queue_size=1)
+            entered = asyncio.Event()
+            release = asyncio.Event()
+
+            @agent.on("temperature.read")
+            async def read(message):
+                entered.set()
+                await release.wait()
+                return {"value": 18.4}
+
+            await agent.start()
+            active = asyncio.create_task(
+                call_app(
+                    agent.app,
+                    "/messages",
+                    Message(sender="controller", type="temperature.read").to_dict(),
+                )
+            )
+            await entered.wait()
+            queued = asyncio.create_task(
+                call_app(
+                    agent.app,
+                    "/messages",
+                    Message(sender="controller", type="temperature.read").to_dict(),
+                )
+            )
+            while agent.inbox.qsize() < 1:
+                await asyncio.sleep(0)
+
+            try:
+                rejected = await call_app(
+                    agent.app,
+                    "/messages",
+                    Message(sender="controller", type="temperature.read").to_dict(),
+                )
+                queued_after_rejection = agent.inbox.qsize()
+                release.set()
+                completed = await asyncio.gather(active, queued)
+                return rejected, queued_after_rejection, completed
+            finally:
+                release.set()
+                await agent.close()
+
+        rejected, queue_size, completed = asyncio.run(main())
+        self.assertEqual(rejected["status"], 200)
+        self.assertEqual(rejected["json"]["status"], "rejected")
+        self.assertEqual(rejected["json"]["reason"], "agent_busy")
+        self.assertEqual(rejected["json"]["payload"], {"retryable": True})
+        self.assertEqual(queue_size, 1)
+        self.assertEqual([response["json"]["status"] for response in completed], ["ok", "ok"])
+
     def test_unknown_type_returns_sorted_unsupported_rejection(self):
         class SetTemperature(BaseModel):
             value: float
@@ -263,6 +330,17 @@ class AgentTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             agent.on("temperature.read")(first)
+
+    def test_handler_must_be_async(self):
+        agent = Agent("temperature")
+
+        def read(message):
+            return {"value": 18.4}
+
+        with self.assertRaisesRegex(TypeError, "handler must be an async function"):
+            agent.on("temperature.read")(read)
+
+        self.assertNotIn("temperature.read", agent.handlers)
 
     def test_handler_can_return_explicit_ok_response(self):
         async def main():
@@ -397,7 +475,7 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(response["json"]["reason"], "handler_timeout")
 
     def test_send_posts_message_and_returns_full_response(self):
-        agent = Agent("controller")
+        agent = Agent("controller", request_timeout=2.5)
 
         class Response:
             status_code = 200
@@ -433,6 +511,7 @@ class AgentTests(unittest.TestCase):
                 try:
                     response = await agent.send("http://example.test", "temperature.read")
                     self.assertIs(Client.last, agent._client)
+                    self.assertEqual(Client.last.kwargs["timeout"], 2.5)
                     return response
                 finally:
                     await agent.close()
