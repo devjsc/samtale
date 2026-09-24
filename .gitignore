@@ -1,6 +1,6 @@
 .idea
 .DS_Store
 
-chatters.egg-info
+*.egg-info/
 dist/
 __pycache__/

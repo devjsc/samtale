@@ -1,4 +1,4 @@
-from chatters import Agent
+from samtale import Agent
 
 
 temperature = Agent("temperature")

@@ -2,7 +2,7 @@ from typing import Any
 
 
 class ChatterError(Exception):
-    """Base exception for chatters."""
+    """Base exception for samtale."""
 
 
 class AgentClosedError(ChatterError):

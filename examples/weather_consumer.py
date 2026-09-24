@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from chatters import Agent
+from samtale import Agent
 
 
 async def main():

@@ -1,116 +1,256 @@
-# chatters
+# Samtale
 
-`chatters` is a modern, minimal messaging framework for agents.
+A modern, minimal messaging framework for agents.
 
-A minimal library for building HTTP-based agents that communicate with each other using a simple JSON message envelope. Agents can register handlers for specific message types, validate payloads using Pydantic models, and manage concurrency for handling multiple messages simultaneously. 
+Samtale lets independent Python components exchange typed requests and
+structured outcomes over HTTP. An agent can be a sensor, controller, service,
+state machine, or LLM-backed application.
 
+Samtale provides a uniform message envelope, Pydantic payload validation,
+bounded handler concurrency, and three outcomes: `ok`, `rejected`, or `error`.
+When an agent does not understand a request, it responds with the message types
+and JSON schemas it accepts.
 
+Samtale provides no broker, orchestration, memory, conversation history,
+workflow engine, or LLM dependency.
+
+```text
+request → envelope validation → handler lookup → payload validation
+        → handler execution → ok / rejected / error
+```
+
+Python 3.11 or later is required.
+
+## Installation
+
+```bash
+pip install samtale
+```
+
+## A small agent
 
 ```python
-from chatters import Agent, Message
+from typing import Literal
+
 from pydantic import BaseModel
 
-temperature = Agent("temperature", max_concurrency=4)
+from samtale import Agent, Message
 
-class ReadTemperature(BaseModel):
-    unit: str = "c"
 
-@temperature.on("read", model=ReadTemperature)
-async def read(message: Message, request: ReadTemperature):
-    return {"value": 18.4, "unit": request.unit}
+class WeatherRequest(BaseModel):
+    location: str
+    unit: Literal["c", "f"] = "c"
 
-temperature.run(port=8001)
+
+weather = Agent("weather")
+
+
+@weather.on("weather_request", model=WeatherRequest)
+async def get_weather(message: Message, request: WeatherRequest):
+    return {
+        "location": request.location,
+        "temperature": 18.4,
+        "unit": request.unit,
+    }
+
+
+if __name__ == "__main__":
+    weather.run(port=8003)
 ```
 
-```python
-from chatters import Agent
+Call it from another agent:
 
-controller = Agent("controller")
-try:
-    reading = await controller.ask("http://localhost:8001", "read")
-    await controller.emit(
-        "http://localhost:8002",
-        "temperature.changed",
-        value=reading["value"],
+```python
+import asyncio
+
+from samtale import Agent
+
+
+async def main() -> None:
+    consumer = Agent("consumer")
+
+    try:
+        result = await consumer.ask(
+            "http://localhost:8003",
+            "weather_request",
+            location="London",
+            unit="c",
+        )
+        print(result)
+    finally:
+        await consumer.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## Rejection is an outcome
+
+An agent can understand a request and still decline it for a domain reason:
+
+```python
+from pydantic import BaseModel
+
+from samtale import Message, Agent
+
+
+class SetTemperature(BaseModel):
+    value: float
+
+weather = Agent("weather")
+
+@weather.on("temperature.set", model=SetTemperature)
+async def set_temperature(message: Message, request: SetTemperature):
+    if request.value > 21:
+        return weather.reject(
+            message,
+            "outside_supported_range",
+            {
+                "requested": request.value,
+                "maximum": 21,
+            },
+        )
+
+    return {"value": request.value}
+```
+
+`send()` returns that rejection normally, leaving the next decision to the
+caller:
+
+```python
+from samtale import Status, Agent
+
+consumer = Agent("consumer")
+
+async def set_temperature_with_fallback() -> None:
+    response = await consumer.send(
+        "http://localhost:8003",
+        "temperature.set",
+        value=24,
     )
-finally:
-    await controller.close()
+
+    if (
+        response.status is Status.REJECTED
+        and response.reason == "outside_supported_range"
+    ):
+        response = await consumer.send(
+            "http://localhost:8003",
+            "temperature.set",
+            value=response.payload["maximum"],
+        )
 ```
 
-`send` waits for a complete response message. `ask` is the convenience form that expects success and returns only the payload. `emit` uses the same HTTP acknowledgement path, then discards the returned message; it is not guaranteed delivery or true fire and forget.
+The framework standardizes the exchange; the agents decide what happens next.
 
-`ask` and `emit` raise `RemoteRejection` for ordinary remote rejections and
-`RemoteError` for unexpected remote failures. `send` returns rejection
-responses normally.
+## Self-describing rejections
 
-Agents execute one handler at a time by default. Set `max_concurrency` to allow
-multiple handlers to run while others are awaiting I/O:
-
-```python
-weather = Agent("weather", max_concurrency=8)
-```
-
-At most eight handlers execute simultaneously; additional messages remain
-queued. Concurrent handlers may access agent-local state across `await` points,
-so applications are responsible for locking shared mutable state when needed.
-The default remains `1` for straightforward sequential behavior.
-
-## Wire envelope
-
-Requests and responses are JSON objects:
+If the consumer sends an unsupported message type, the weather agent returns a
+normal rejection with its accepted messages. The relevant response fields look
+like this:
 
 ```json
 {
-  "id": "uuid",
-  "sender": "controller",
-  "type": "read",
-  "payload": {}
+  "status": "rejected",
+  "reason": "unsupported_message",
+  "payload": {
+    "accepted_messages": [
+      {
+        "type": "weather_request",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "location": {"type": "string"},
+            "unit": {"enum": ["c", "f"], "default": "c"}
+          },
+          "required": ["location"]
+        }
+      }
+    ]
+  }
 }
 ```
 
-Replies are messages too. They keep the original domain `type`, include the original message ID as `reply_to`, and use `status` plus optional `reason` to describe the outcome.
+Invalid payloads are also rejected and include the expected message schema
+alongside structured validation issues.
 
-Registering a handler with a Pydantic `model=` validates its payload and passes
-the parsed model as the handler's second argument. Rejections for invalid or
-unsupported messages include the expected JSON Schema so callers can discover
-the formats the agent accepts. Handlers without `model=` retain the original
-single-argument API.
+## Sending messages
 
-## Tiny demo
+The three outbound methods share the same acknowledged HTTP exchange:
 
-Start a temperature agent in one terminal:
+- `send()` returns the complete response `Message`, including rejections.
+- `ask()` expects success and returns only the response payload.
+- `emit()` expects success and discards the response payload.
 
-```bash
-.venv/bin/python examples/temperature.py
+`ask()` and `emit()` raise `RemoteRejection` for ordinary domain rejections and
+`RemoteError` for unexpected remote failures. `emit()` is a convenience method,
+not guaranteed delivery or true fire-and-forget.
+
+## Concurrency
+
+Agents execute one handler at a time by default. Set `max_concurrency` when an
+agent should continue processing while another handler awaits I/O:
+
+```python
+agent = Agent("weather", max_concurrency=8)
 ```
 
-Ask it for a reading from another terminal:
+At most eight handlers execute simultaneously; additional messages remain in
+the inbox. Concurrent handlers can access the same local state across `await`
+points, so applications should protect shared mutable state when necessary.
 
-```bash
-.venv/bin/python examples/controller.py
+## Wire format
+
+A request is a JSON object:
+
+```json
+{
+  "id": "request-id",
+  "sender": "consumer",
+  "type": "weather_request",
+  "payload": {"location": "London", "unit": "c"}
+}
 ```
 
-## Canonical example
+The response retains the domain type and correlates itself with `reply_to`:
 
-Start the weather agent, which accepts a Pydantic `WeatherRequest` payload:
-
-```bash
-.venv/bin/python examples/weather.py
+```json
+{
+  "id": "response-id",
+  "sender": "weather",
+  "type": "weather_request",
+  "payload": {"location": "London", "temperature": 18.4, "unit": "c"},
+  "reply_to": "request-id",
+  "status": "ok"
+}
 ```
 
-Then run the consumer:
+HTTP status describes the HTTP-level outcome. Message status describes the
+domain outcome. Rejections use HTTP 200; malformed input and runtime failures
+use the corresponding HTTP error status.
+
+## Run the included example
+
+From a checkout:
 
 ```bash
-.venv/bin/python examples/weather_consumer.py
+uv sync --locked
+uv run python examples/weather.py
 ```
 
-The consumer first sends an unsupported message and prints the `rejected`
-response, including the `weather_request` JSON Schema. It then uses that
-contract to send a valid `weather_request` and prints the successful result.
+In another terminal:
+
+```bash
+uv run python examples/weather_consumer.py
+```
+
+The consumer first demonstrates schema discovery with an unsupported request,
+then sends a valid typed request.
 
 ## Tests
-Written by an llm, for now.
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
+uv run python -m unittest discover -s tests -v
 ```
+
+The GitHub Actions workflow runs the suite on Python 3.11, 3.12, and 3.13.

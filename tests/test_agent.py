@@ -6,7 +6,7 @@ from unittest.mock import patch
 import httpx
 from pydantic import BaseModel
 
-from chatters import (
+from samtale import (
     Agent,
     Message,
     MessageValidationError,
@@ -367,7 +367,7 @@ class AgentTests(unittest.TestCase):
             finally:
                 await agent.close()
 
-        with self.assertLogs("chatters.helpers", level="ERROR") as logs:
+        with self.assertLogs("samtale.helpers", level="ERROR") as logs:
             response = asyncio.run(main())
         self.assertEqual(response["status"], 500)
         self.assertEqual(response["json"]["status"], "error")
@@ -429,7 +429,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     response = await agent.send("http://example.test", "temperature.read")
                     self.assertIs(Client.last, agent._client)
@@ -467,7 +467,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     return await agent.ask("http://example.test", "temperature.read")
                 finally:
@@ -501,7 +501,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     return await agent.send("http://example.test", "temperature.set", value=24)
                 finally:
@@ -537,7 +537,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     with self.assertRaises(RemoteRejection) as raised:
                         await agent.ask("http://example.test", "temperature.set", value=24)
@@ -582,7 +582,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     with self.assertRaises(TransportError):
                         await agent.send("http://example.test", "temperature.read")
@@ -618,7 +618,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     with self.assertRaises(TransportError):
                         await agent.send("http://example.test", "temperature.read")
@@ -654,7 +654,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     with self.assertRaises(RemoteError) as raised:
                         await agent.send("http://example.test", "temperature.read")
@@ -697,7 +697,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     with self.assertRaises(TransportError):
                         await agent.send("http://example.test", "temperature.read")
@@ -734,7 +734,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     with self.assertRaises(TransportError):
                         await agent.send("http://example.test", "temperature.read")
@@ -766,7 +766,7 @@ class AgentTests(unittest.TestCase):
                 self.is_closed = True
 
         async def main():
-            with patch("chatters.agent.httpx.AsyncClient", Client):
+            with patch("samtale.agent.httpx.AsyncClient", Client):
                 try:
                     with self.assertRaises(TransportError):
                         await agent.send("http://example.test", "temperature.read")

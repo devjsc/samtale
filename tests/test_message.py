@@ -1,6 +1,6 @@
 import unittest
 
-from chatters import Message, MessageValidationError, Status
+from samtale import Message, MessageValidationError, Status
 
 
 class MessageTests(unittest.TestCase):

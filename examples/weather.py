@@ -1,6 +1,6 @@
 from typing import Literal
 from pydantic import BaseModel, Field
-from chatters import Agent, Message
+from samtale import Agent, Message
 
 
 class WeatherRequest(BaseModel):

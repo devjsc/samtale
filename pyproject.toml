@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chatters"
+name = "samtale"
 version = "0.1.0"
-description = "Small peer-to-peer HTTP message library for independent Python agents."
+description = "Minimal typed HTTP messaging for independent Python agents."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,4 +16,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["chatters*"]
+include = ["samtale*"]
